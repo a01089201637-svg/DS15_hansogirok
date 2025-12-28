@@ -39,9 +39,9 @@ loaded_data = load_from_file()
 if "saved_chats" not in st.session_state:
     st.session_state.saved_chats = loaded_data["saved_chats"] if loaded_data else []
 if "me_pic" not in st.session_state:
-    st.session_state.me_pic = loaded_data["me_pic"] if loaded_data else "https://cdn-icons-png.flaticon.com/512/4140/4140037.png"
+    st.session_state.me_pic = loaded_data["me_pic"] if loaded_data else "https://cdn-icons-png.flaticon.com/512/847/847969.png"
 if "other_pic" not in st.session_state:
-    st.session_state.other_pic = loaded_data["other_pic"] if loaded_data else "https://cdn-icons-png.flaticon.com/512/4140/4140048.png"
+    st.session_state.other_pic = loaded_data["other_pic"] if loaded_data else "https://cdn-icons-png.flaticon.com/512/3106/3106921.png"
 if "me_name" not in st.session_state:
     st.session_state.me_name = loaded_data["me_name"] if loaded_data else "나"
 if "other_name" not in st.session_state:
