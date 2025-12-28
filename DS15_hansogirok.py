@@ -8,10 +8,33 @@ import json
 import os
 
 # 페이지 전체 폭 설정
-st.set_page_config(layout="wide")
+st.set_page_config(layout="wide", page_title="페어한소기록")
 
-# --- 데이터 영구 저장 기능 ---
-DATA_FILE = "chat_data.json"
+# --- 1. 로그인 섹션 (비밀번호 입력) ---
+if "user_id" not in st.session_state:
+    st.session_state.user_id = ""
+
+if not st.session_state.user_id:
+    st.title("🔐 개인 채팅 공간 입장")
+    st.write("본인만의 **비밀번호**를 입력하여 접속하세요. 입력한 비밀번호에 따라 별도의 저장 공간이 생성됩니다.")
+    
+    # 비밀번호 입력창
+    user_input = st.text_input("비밀번호 입력", type="password", help="비밀번호가 다르면 다른 저장 목록이 나타납니다.")
+    
+    if st.button("입장하기", use_container_width=True):
+        if user_input.strip():
+            st.session_state.user_id = user_input.strip()
+            st.rerun()
+        else:
+            st.error("비밀번호를 입력해 주세요.")
+    
+    st.info("💡 주의: Streamlit Cloud 환경에서는 서버 재시작 시 파일이 초기화될 수 있습니다.")
+    st.stop()  # 로그인 전까지 아래 코드를 실행하지 않음
+
+# --- 2. 데이터 관리 함수 (사용자 ID 기반) ---
+# 비밀번호별로 고유한 파일명을 생성합니다.
+USER_ID = st.session_state.user_id
+DATA_FILE = f"chat_data_{USER_ID}.json"
 
 def save_to_file():
     data = {
@@ -33,15 +56,17 @@ def load_from_file():
             return None
     return None
 
-# --- 데이터 초기화 ---
+# --- 3. 데이터 및 세션 초기화 ---
 loaded_data = load_from_file()
 
 if "saved_chats" not in st.session_state:
     st.session_state.saved_chats = loaded_data["saved_chats"] if loaded_data else []
 if "me_pic" not in st.session_state:
-    st.session_state.me_pic = loaded_data["me_pic"] if loaded_data else "https://cdn-icons-png.flaticon.com/512/847/847969.png"
+    # 기본값은 투명 이미지로 설정 (요청 반영)
+    TRANSPARENT_PIXEL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
+    st.session_state.me_pic = loaded_data["me_pic"] if loaded_data else TRANSPARENT_PIXEL
 if "other_pic" not in st.session_state:
-    st.session_state.other_pic = loaded_data["other_pic"] if loaded_data else "https://cdn-icons-png.flaticon.com/512/847/847969.png"
+    st.session_state.other_pic = loaded_data["other_pic"] if loaded_data else TRANSPARENT_PIXEL
 if "me_name" not in st.session_state:
     st.session_state.me_name = loaded_data["me_name"] if loaded_data else "나"
 if "other_name" not in st.session_state:
@@ -52,7 +77,7 @@ if "editing_idx" not in st.session_state: st.session_state.editing_idx = None
 if "show_settings" not in st.session_state: st.session_state.show_settings = False
 if "chat_title" not in st.session_state: st.session_state.chat_title = "새로운 채팅"
 
-# --- 유틸리티 함수 ---
+# --- 4. 유틸리티 및 다이얼로그 함수 ---
 def get_image_base64(img):
     if img is not None:
         try:
@@ -63,33 +88,20 @@ def get_image_base64(img):
         except: return None
     return None
 
-# --- [삭제 확인 다이얼로그 추가] ---
 @st.dialog("채팅 삭제 확인")
 def confirm_delete_modal(idx, title):
     st.warning(f"**정말로 '{title}'를 삭제하시겠습니까?**")
-    
-    # HTML을 사용하여 색상(회색)과 크기(작게)를 조정
     st.markdown(
-        f"""
-        <span style='color: #808080; font-size: 0.85rem;'>
-            삭제할 경우, '{title}' 의 모든 기록이 지워집니다.
-        </span>
-        """, 
+        f"<span style='color: #808080; font-size: 0.85rem;'>*삭제할 경우, '{title}' 의 모든 기록이 지워집니다.*</span>", 
         unsafe_allow_html=True
     )
-    
     col1, col2 = st.columns(2)
-    
-    # [수정 포인트] 각 버튼에 고유한 key를 부여하여 중복 ID 에러를 방지합니다.
-    if col1.button("삭제", type="primary", use_container_width=True, key=f"real_del_btn_{idx}"):
+    if col1.button("삭제", type="primary", use_container_width=True, key=f"real_del_{idx}"):
         st.session_state.saved_chats.pop(idx)
         save_to_file()
         st.rerun()
-        
-    if col2.button("취소", use_container_width=True, key=f"cancel_del_btn_{idx}"):
-        st.rerun()
+    if col2.button("취소", use_container_width=True, key=f"cancel_del_{idx}"): st.rerun()
 
-# --- [프로필 사진 설정 다이얼로그] ---
 @st.dialog("프로필 사진 설정")
 def edit_profile_pic_modal(target_key):
     st.write("새 프로필 사진을 업로드하세요.")
@@ -108,7 +120,7 @@ def edit_profile_pic_modal(target_key):
             st.rerun()
         if col2.button("취소", use_container_width=True): st.rerun()
 
-# CSS 설정
+# --- 5. 스타일 및 레이아웃 ---
 st.markdown("""
 <style>
     .chat-container { display: flex; flex-direction: column; gap: 15px; padding: 10px; }
@@ -131,9 +143,14 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- [사이드바: 왼쪽] ---
+# --- 6. 사이드바 (저장된 목록) ---
 with st.sidebar:
-    st.header("📁 저장된 목록")
+    st.header(f"🔑 {USER_ID}님의 공간")
+    if st.button("로그아웃 (나가기)", use_container_width=True):
+        st.session_state.user_id = ""
+        st.rerun()
+    st.divider()
+    st.subheader("📁 저장된 목록")
     if not st.session_state.saved_chats:
         st.info("저장된 채팅이 없습니다.")
     else:
@@ -149,7 +166,6 @@ with st.sidebar:
                     st.session_state.other_name = saved.get('other_name', "상대방")
                     st.session_state.chat_title = saved['title']
                     st.rerun()
-                # [수정 포인트] 삭제 버튼 클릭 시 다이얼로그 호출
                 if c_del.button("삭제", key=f"del_btn_{idx}"):
                     confirm_delete_modal(idx, saved['title'])
     
@@ -160,7 +176,7 @@ with st.sidebar:
         st.session_state.chat_title = "새로운 채팅"
         st.rerun()
 
-# --- [중앙 레이아웃] ---
+# --- 7. 메인 화면 ---
 if st.session_state.show_settings:
     _, col_main, col_settings = st.columns([0.05, 0.55, 0.4])
 else:
@@ -186,7 +202,7 @@ with col_main:
                 st.markdown(f'''<div class="message-row row-other"><img src="{pic}" class="profile-pic"><div class="message-content other-content"><div class="sender-name">{display_name}</div><div class="bubble other-bubble">{msg["content"]}</div></div></div>''', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
-# --- [설정 섹션] ---
+# --- 8. 설정 섹션 ---
 if st.session_state.show_settings:
     with col_settings:
         with st.expander("👤 프로필 및 이름", expanded=False):
@@ -252,4 +268,3 @@ if st.session_state.show_settings:
                     save_to_file()
                     st.success("저장 완료!")
                     st.rerun()
-
