@@ -6,35 +6,78 @@ import io
 import datetime
 import json
 import os
+import hashlib
 
 # 페이지 전체 폭 설정
-st.set_page_config(layout="wide", page_title="페어한소기록")
+st.set_page_config(layout="wide", page_title="나만의 비밀 채팅 앱")
 
-# --- 1. 로그인 섹션 (비밀번호 입력) ---
-if "user_id" not in st.session_state:
-    st.session_state.user_id = ""
+# --- 1. 사용자 계정 데이터베이스 관리 ---
+USER_DB_FILE = "users_db.json"
 
-if not st.session_state.user_id:
-    st.title("🔐 개인 채팅 공간 입장")
-    st.write("본인만의 **비밀번호**를 입력하여 접속하세요. 입력한 비밀번호에 따라 별도의 저장 공간이 생성됩니다.")
-    
-    # 비밀번호 입력창
-    user_input = st.text_input("비밀번호 입력", type="password", help="비밀번호가 다르면 다른 저장 목록이 나타납니다.")
-    
-    if st.button("입장하기", use_container_width=True):
-        if user_input.strip():
-            st.session_state.user_id = user_input.strip()
-            st.rerun()
-        else:
-            st.error("비밀번호를 입력해 주세요.")
-    
-    st.info("💡 주의: Streamlit Cloud 환경에서는 서버 재시작 시 파일이 초기화될 수 있습니다.")
-    st.stop()  # 로그인 전까지 아래 코드를 실행하지 않음
+def load_user_db():
+    if os.path.exists(USER_DB_FILE):
+        with open(USER_DB_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
 
-# --- 2. 데이터 관리 함수 (사용자 ID 기반) ---
-# 비밀번호별로 고유한 파일명을 생성합니다.
-USER_ID = st.session_state.user_id
-DATA_FILE = f"chat_data_{USER_ID}.json"
+def save_user_db(db):
+    with open(USER_DB_FILE, "w", encoding="utf-8") as f:
+        json.dump(db, f, ensure_ascii=False, indent=4)
+
+def make_hash(password):
+    return hashlib.sha256(password.encode()).hexdigest()
+
+# --- 2. 로그인/회원가입 섹션 (중앙 집중 레이아웃) ---
+if "user_session" not in st.session_state:
+    st.session_state.user_session = None
+
+if not st.session_state.user_session:
+    # 화면을 3분할하여 중앙에만 로그인창 배치 (좌우 여백을 넓게 줌)
+    _, login_col, _ = st.columns([1.2, 1.0, 1.2]) 
+    
+    with login_col:
+        st.markdown("<br><br>", unsafe_allow_html=True) # 상단 여백
+        st.title("💬페어한소기록")
+        
+        tab1, tab2 = st.tabs(["로그인", "계정 생성"])
+        user_db = load_user_db()
+
+        with tab1:
+            st.subheader("로그인")
+            l_id = st.text_input("아이디", key="login_id")
+            l_pw = st.text_input("비밀번호", type="password", key="login_pw")
+            if st.button("로그인 하기", use_container_width=True):
+                if l_id in user_db and user_db[l_id] == make_hash(l_pw):
+                    st.session_state.user_session = make_hash(l_id + l_pw)
+                    st.session_state.display_id = l_id
+                    st.success(f"{l_id}님, 환영합니다!")
+                    st.rerun()
+                else:
+                    st.error("아이디 또는 비밀번호가 일치하지 않습니다.")
+
+        with tab2:
+            st.subheader("새 계정 만들기")
+            new_id = st.text_input("새 아이디", key="new_id")
+            new_pw = st.text_input("새 비밀번호", type="password", key="new_pw")
+            confirm_pw = st.text_input("비밀번호 확인", type="password", key="confirm_pw")
+            
+            if st.button("가입하기", use_container_width=True):
+                if not new_id or not new_pw:
+                    st.warning("아이디와 비밀번호를 모두 입력해주세요.")
+                elif new_id in user_db:
+                    st.error("이미 존재하는 아이디입니다.")
+                elif new_pw != confirm_pw:
+                    st.error("비밀번호가 일치하지 않습니다.")
+                else:
+                    user_db[new_id] = make_hash(new_pw)
+                    save_user_db(user_db)
+                    st.success("계정이 생성되었습니다! 로그인해주세요.")
+    
+    st.stop() # 로그인 전까지 아래의 넓은 레이아웃 코드를 읽지 않음
+
+# --- 3~5. 데이터 관리 및 유틸리티 (기존과 동일) ---
+SESSION_KEY = st.session_state.user_session
+DATA_FILE = f"chat_data_{SESSION_KEY}.json"
 
 def save_to_file():
     data = {
@@ -52,32 +95,39 @@ def load_from_file():
         try:
             with open(DATA_FILE, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except:
-            return None
+        except: return None
     return None
 
-# --- 3. 데이터 및 세션 초기화 ---
+# 현재 세션 키에 맞는 파일 로드
 loaded_data = load_from_file()
 
-if "saved_chats" not in st.session_state:
+# 1. 필수 제어 변수들이 세션에 없으면 기본값으로 생성 (에러 방지 핵심)
+if "show_settings" not in st.session_state:
+    st.session_state.show_settings = False
+if "editing_idx" not in st.session_state:
+    st.session_state.editing_idx = None
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+# 2. 계정 전환 감지 및 유저 데이터 로드
+if "current_user_key" not in st.session_state or st.session_state.current_user_key != SESSION_KEY:
+    # 파일에서 데이터 가져오기
     st.session_state.saved_chats = loaded_data["saved_chats"] if loaded_data else []
-if "me_pic" not in st.session_state:
-    # 기본값은 투명 이미지로 설정 (요청 반영)
+    
     TRANSPARENT_PIXEL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
     st.session_state.me_pic = loaded_data["me_pic"] if loaded_data else TRANSPARENT_PIXEL
-if "other_pic" not in st.session_state:
     st.session_state.other_pic = loaded_data["other_pic"] if loaded_data else TRANSPARENT_PIXEL
-if "me_name" not in st.session_state:
     st.session_state.me_name = loaded_data["me_name"] if loaded_data else "나"
-if "other_name" not in st.session_state:
     st.session_state.other_name = loaded_data["other_name"] if loaded_data else "상대방"
+    
+    # 계정 전환 시 현재 작업 중이던 채팅창 초기화
+    st.session_state.messages = []
+    st.session_state.chat_title = "새로운 채팅"
+    st.session_state.show_settings = False
+    
+    # 로드 완료 표시
+    st.session_state.current_user_key = SESSION_KEY
 
-if "messages" not in st.session_state: st.session_state.messages = []
-if "editing_idx" not in st.session_state: st.session_state.editing_idx = None
-if "show_settings" not in st.session_state: st.session_state.show_settings = False
-if "chat_title" not in st.session_state: st.session_state.chat_title = "새로운 채팅"
-
-# --- 4. 유틸리티 및 다이얼로그 함수 ---
 def get_image_base64(img):
     if img is not None:
         try:
@@ -91,10 +141,7 @@ def get_image_base64(img):
 @st.dialog("채팅 삭제 확인")
 def confirm_delete_modal(idx, title):
     st.warning(f"**정말로 '{title}'를 삭제하시겠습니까?**")
-    st.markdown(
-        f"<span style='color: #808080; font-size: 0.85rem;'>*삭제할 경우, '{title}' 의 모든 기록이 지워집니다.*</span>", 
-        unsafe_allow_html=True
-    )
+    st.markdown(f"<span style='color: #808080; font-size: 0.85rem;'>*삭제할 경우, '{title}' 의 모든 기록이 지워집니다.*</span>", unsafe_allow_html=True)
     col1, col2 = st.columns(2)
     if col1.button("삭제", type="primary", use_container_width=True, key=f"real_del_{idx}"):
         st.session_state.saved_chats.pop(idx)
@@ -120,7 +167,7 @@ def edit_profile_pic_modal(target_key):
             st.rerun()
         if col2.button("취소", use_container_width=True): st.rerun()
 
-# --- 5. 스타일 및 레이아웃 ---
+# --- 6. 스타일 설정 ---
 st.markdown("""
 <style>
     .chat-container { display: flex; flex-direction: column; gap: 15px; padding: 10px; }
@@ -143,11 +190,16 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 6. 사이드바 (저장된 목록) ---
+# --- 7. 사이드바 ---
 with st.sidebar:
-    st.header(f"🔑 {USER_ID}님의 공간")
-    if st.button("로그아웃 (나가기)", use_container_width=True):
-        st.session_state.user_id = ""
+    st.header(f"👤 {st.session_state.display_id}님")
+    if st.button("로그아웃", use_container_width=True):
+        # 특정 유저 세션 정보만 삭제하여 계정 전환 유도
+        st.session_state.user_session = None
+        st.session_state.display_id = None
+        # 데이터가 섞이지 않도록 로드 상태 초기화
+        if "current_user_key" in st.session_state:
+            del st.session_state.current_user_key
         st.rerun()
     st.divider()
     st.subheader("📁 저장된 목록")
@@ -168,7 +220,6 @@ with st.sidebar:
                     st.rerun()
                 if c_del.button("삭제", key=f"del_btn_{idx}"):
                     confirm_delete_modal(idx, saved['title'])
-    
     st.divider()
     if st.button("➕ 새 채팅 시작하기", use_container_width=True):
         st.session_state.messages = []
@@ -176,16 +227,17 @@ with st.sidebar:
         st.session_state.chat_title = "새로운 채팅"
         st.rerun()
 
-# --- 7. 메인 화면 ---
+# --- 8. 메인 레이아웃 (채팅 전용 넓은 폭 유지) ---
 if st.session_state.show_settings:
-    _, col_main, col_settings = st.columns([0.05, 0.55, 0.4])
+    col_main, col_settings = st.columns([0.45, 0.35]) # 설정창 열렸을 때
 else:
+    # 로그인 전과 달리 여백 비율을 [0.2, 0.6, 0.2]로 설정하여 넓게 사용
     _, col_main, _ = st.columns([0.2, 0.6, 0.2])
 
 with col_main:
-    h_left, h_right = st.columns([0.9, 0.1])
+    h_left, h_right = st.columns([0.92, 0.08])
     h_left.markdown(f"### 💬 {st.session_state.chat_title}")
-    if h_right.button("⚙️"):
+    if h_right.button("⚙️", use_container_width=True):
         st.session_state.show_settings = not st.session_state.show_settings
         st.rerun()
 
@@ -202,10 +254,10 @@ with col_main:
                 st.markdown(f'''<div class="message-row row-other"><img src="{pic}" class="profile-pic"><div class="message-content other-content"><div class="sender-name">{display_name}</div><div class="bubble other-bubble">{msg["content"]}</div></div></div>''', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
-# --- 8. 설정 섹션 ---
+# --- 9. 설정 섹션 (동일) ---
 if st.session_state.show_settings:
     with col_settings:
-        with st.expander("👤 프로필 및 이름", expanded=False):
+        with st.expander("👤 프로필 및 이름", expanded=True):
             n1, n2 = st.columns(2)
             with n1: 
                 new_me_name = st.text_input("나", value=st.session_state.me_name, key="set_me_n")
@@ -226,7 +278,7 @@ if st.session_state.show_settings:
                 st.image(st.session_state.other_pic, width=50)
                 if st.button("상대 변경", key="btn_ot_pic", use_container_width=True): edit_profile_pic_modal("other")
 
-        with st.expander("📝 메시지 관리", expanded=False):
+        with st.expander("📝 메시지 관리", expanded=True):
             e_idx = st.session_state.editing_idx
             with st.form("msg_form_wide", clear_on_submit=True):
                 s_opt = st.radio("보내는 사람", [st.session_state.me_name, st.session_state.other_name], 
